@@ -74,6 +74,8 @@ airflow webserver &
 * Start Airflow’s webserver in background
 
 
+----- Rodar a partir daqui para subir via docker ------- 
+
 docker build -t airflow-basic .
 * Build a docker image from the Dockerfile in the current directory (airflow-materials/airflow-basic)  and name it airflow-basic
 
