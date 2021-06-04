@@ -13,15 +13,20 @@ import csv
 import requests
 import json
 
+
+#definição de dicionário de parâmetros que serão comum a todas as DAGS
 default_args = {
-    "owner": "airflow",
+    "owner": "aifrlow",  
     "email_on_failure": False,
     "email_on_retry": False,
     "email": "admin@localhost.com",
-    "retries": 1,
-    "retry_delay": timedelta(minutes=5)
+    "retries": 1, #quantidade de tentativas em caso de erro
+    "retry_delay": timedelta(minutes=5) #tempo até o retry
 }
 
+# Para a Task 3 - criaçao da funçao download_rates()
+# Download forex rates according to the currencies we want to watch
+# described in the file forex_currencies.csv
 def download_rates():
     BASE_URL = "https://gist.githubusercontent.com/marclamberti/f45f872dea4dfd3eaa015a4a1af4b39b/raw/"
     ENDPOINTS = {
@@ -41,42 +46,59 @@ def download_rates():
                 json.dump(outdata, outfile)
                 outfile.write('\n')
 
+# Funcao para a task 8 do Slack
 def _get_message() -> str:
     return "Hi from forex_data_pipeline"
 
+#definiçao da DAG, sequencia de parametros:
+#id único em todo o Ariflow, 
+#data de inicio de schedule
+#intervalo. Se utilizar @daily, starta na meia noite
+#dicionario padrao definido acima
+#catchup boa pratica. Garante que o airflow nao saia rodando as execucoes (backfill)
+#desde a data de inicio do job até hoje
 with DAG("forex_data_pipeline", start_date=datetime(2021, 1 ,1), 
     schedule_interval="@daily", default_args=default_args, catchup=False) as dag:
 
+# Task 1 - primeiro iremos verificar se a url está online
     is_forex_rates_available = HttpSensor(
-        task_id="is_forex_rates_available",
-        http_conn_id="forex_api",
+        task_id="is_forex_rates_available", #tem que ser único dentro da DAG
+        http_conn_id="forex_api", 
         endpoint="marclamberti/f45f872dea4dfd3eaa015a4a1af4b39b",
-        response_check=lambda response: "rates" in response.text,
-        poke_interval=5,
-        timeout=20
+        response_check=lambda response: "rates" in response.text, #verificar se o retorno está de acordo
+        poke_interval = 5, #a cada 5 segundos verifica se a url e ap está online
+        timeout= 20 # em segundos, ate dar erro
     )
 
+# Task 2 - Criar um sensor para ver se existe arquivo dentro de um diretorio. Ver documentaçao de sensores
     is_forex_currencies_file_available = FileSensor(
-        task_id="is_forex_currencies_file_available",
-        fs_conn_id="forex_path",
-        filepath="forex_currencies.csv",
-        poke_interval=5,
-        timeout=20
+        task_id= "is_forex_currencies_file_available",
+        fs_conn_id= "forex_path", #connection que foi criada no airflow web
+        filepath = "forex_currencies.csv", #arquivo que estamos procurando
+        poke_interval = 5,
+        timeout= 20
     )
 
+# Task 3 - Executando a função Python criada no inicio do codigo
     downloading_rates = PythonOperator(
         task_id="downloading_rates",
         python_callable=download_rates
     )
 
+# Task 4 - jogar o arquivo json no hdfs
+# as 3 aspas abaixo permitem escrever comandos em multiplas linhas.
+# primeiro comando cria um diretório chamado /fores
+# segundo comando joga o arquivo json neste diretorio criado
+
     saving_rates = BashOperator(
         task_id="saving_rates",
         bash_command="""
-            hdfs dfs -mkdir -p /forex && \
-            hdfs dfs -put -f $AIRFLOW_HOME/dags/files/forex_rates.json /forex
+        hdfs dfs -mkdir -p /forex && \ 
+        hdfs dfs -put -f $AIRFLOW_HOME/dags/files/forex_rates.json /forex
         """
     )
 
+# Task 5 - Criar tabela HIVE 
     creating_forex_rates_table = HiveOperator(
         task_id="creating_forex_rates_table",
         hive_cli_conn_id="hive_conn",
@@ -97,27 +119,32 @@ with DAG("forex_data_pipeline", start_date=datetime(2021, 1 ,1),
         """
     )
 
+# Task 6 - Processar os dados com SPARK
     forex_processing = SparkSubmitOperator(
         task_id="forex_processing",
-        application="/opt/airflow/dags/scripts/forex_processing.py",
+        application="/opt/airflow/dags/scripts/forex_processing.py", 
+        #esse script nao ira rodar dentro do airflow, mas sim do spark
         conn_id="spark_conn",
-        verbose=False
+        verbose=False  #nao gerar muito log
     )
 
+# Task 7 - Mandar email notification (primeiro tem que configurar no airflow.cfg)
     send_email_notification = EmailOperator(
         task_id="send_email_notification",
-        to="airflow_course@yopmail.com",
+        to="leonardogw@gmail.com",
         subject="forex_data_pipeline",
         html_content="<h3>forex_data_pipeline</h3>"
     )
 
-    send_slack_notification = SlackWebhookOperator(
-        task_id="send_slack_notification",
-        http_conn_id="slack_conn",
-        message=_get_message(),
-        channel="#monitoring"
-    )
+# Task 8 - Mandar notification no Slack
+
+ #   send_slack_notification = SlackWebhookOperator(
+ #       task_id="send_slack_notification",
+ #       http_conn_id="slack_conn",
+ #       message=_get_message(),
+ #       channel="#airflow-monitoring"
+ #   )
     
     is_forex_rates_available >> is_forex_currencies_file_available >> downloading_rates >> saving_rates 
     saving_rates >> creating_forex_rates_table >> forex_processing
-    forex_processing >> send_email_notification >> send_slack_notification 
+    forex_processing >> send_email_notification 
