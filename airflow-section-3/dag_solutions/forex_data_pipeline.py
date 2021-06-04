@@ -6,6 +6,7 @@ from airflow.operators.python import PythonOperator
 from airflow.operators.bash. import BashOperator
 from airflow.providers.apache.hive.operators.hive import HiveOperator
 from airflow.providers.apache.spark.operators.spark_submit import SparkSubmitOperator
+from airflow.operators.email import EmailOperator
 import csv
 import requests
 import json
@@ -124,4 +125,12 @@ creating_forex_rates_table = HiveOperator(
         #esse script nao ira rodar dentro do airflow, mas sim do spark
         conn_id="spark_conn",
         verbose=False  #nao gerar muito log
+    )
+
+# Task 7 - Mandar email notification (primeiro tem que configurar no airflow.cfg)
+    send_email_notification = EmailOperator(
+        task_id="send_email_notification",
+        to="leonardogw@hotmail.com",
+        subject="forex_data_pipeline",
+        html_content="<h3>forex_data_pipeline</h3>"
     )
